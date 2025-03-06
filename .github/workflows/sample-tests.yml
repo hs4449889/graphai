@@ -1,0 +1,44 @@
+name: GraphAI Sample Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'packages/**'
+      - '.github/workflows/sample-tests.yml'
+
+jobs:
+  test-samples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install dependencies
+        run: |
+          npm install -g @receptron/graphai_cli
+          npm install
+          
+      - name: Install jq
+        run: sudo apt-get install -y jq
+        
+      - name: Run CI workflow
+        run: |
+          ./scripts/ci_workflow.sh \
+            --pr-number ${{ github.event.pull_request.number }} \
+            --repo-owner ${{ github.repository_owner }} \
+            --repo-name ${{ github.event.repository.name }} \
+            --openai-api-key ${{ secrets.OPENAI_API_KEY }}
+            
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: reports
+          path: |
+            sample_execution_report.md
+            graphai_samples_report.md
+            fix_proposals.md
