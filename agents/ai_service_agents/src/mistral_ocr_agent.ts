@@ -1,294 +1,230 @@
 import { AgentFunction, AgentFunctionInfo } from "graphai";
 import axios from "axios";
+import * as fs from "fs";
+import * as path from "path";
 import FormData from "form-data";
-import fs from "fs";
-import path from "path";
 
 type MistralOCRInputs = {
-  outputFormat?: string;
+  pdfPath?: string;
+  pdfContentBase64?: string;
+};
+
+type MistralOCRParams = {
+  outputFormat?: "full" | "text" | "markdown" | "images";
   saveImages?: boolean;
   imagesDir?: string;
   markdownDir?: string;
-};
-
-type MistralOCRConfig = {
   apiKey?: string;
+  debug?: boolean;
 };
-
-type MistralOCRParams = MistralOCRInputs & MistralOCRConfig;
 
 type MistralOCRResult = {
   text_content: string;
-  saved_images?: Record<number, Record<string, string>>;
-  markdown_files?: Record<string, string>;
-  ocr_result?: any;
+  markdown_content?: string;
+  images?: Record<string, string>;
+  full_result?: any;
+  metadata?: {
+    source: string;
+    timestamp: string;
+    pages: number;
+  };
 };
 
 export const mistralOcrAgent: AgentFunction<
   MistralOCRParams,
   MistralOCRResult,
-  { pdfPath: string; pdfContentBase64?: string },
-  MistralOCRConfig
-> = async ({ namedInputs, params, config }) => {
+  MistralOCRInputs
+> = async ({ namedInputs, params }) => {
   // Get parameters
   const { 
     outputFormat = "text", 
-    saveImages = false,
-    imagesDir = "output/images",
-    markdownDir = "output/markdown"
+    saveImages = false, 
+    imagesDir = "output/images", 
+    markdownDir = "output/markdown",
+    debug = false
   } = params;
+  
+  // Get API key
+  const apiKey = params.apiKey || process.env.MISTRAL_API_KEY;
+  
+  if (!apiKey && !debug) {
+    throw new Error("Mistral API key not provided and MISTRAL_API_KEY environment variable not set");
+  }
   
   // Get inputs
   const { pdfPath, pdfContentBase64 } = namedInputs;
   
-  // Get API key
-  const apiKey = config?.apiKey || params.apiKey || process.env.MISTRAL_API_KEY;
-  
-  if (!apiKey) {
-    throw new Error("Mistral API key not provided and MISTRAL_API_KEY environment variable not set");
-  }
-  
-  if (!pdfPath && !pdfContentBase64) {
+  if (!pdfPath && !pdfContentBase64 && !debug) {
     throw new Error("Either pdfPath or pdfContentBase64 must be provided");
   }
   
-  // Create API client
-  const client = axios.create({
-    baseURL: "https://api.mistral.ai/v1",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    }
-  });
-  
-  // Process PDF
-  let fileContent: Buffer;
-  let fileName: string;
-  
-  if (pdfPath) {
-    fileContent = fs.readFileSync(pdfPath);
-    fileName = path.basename(pdfPath);
-  } else if (pdfContentBase64) {
-    fileContent = Buffer.from(pdfContentBase64, 'base64');
-    fileName = "document.pdf";
-  } else {
-    throw new Error("Either pdfPath or pdfContentBase64 must be provided");
+  // Debug mode
+  if (debug) {
+    return {
+      text_content: "This is a sample OCR text content for testing purposes.",
+      markdown_content: "# Sample Document\n\nThis is a **sample** document for testing purposes.",
+      images: { "image_1": "base64_encoded_image_data" },
+      metadata: {
+        source: "Debug Mode",
+        timestamp: new Date().toISOString(),
+        pages: 1
+      }
+    };
   }
   
-  // Upload PDF
-  const formData = new FormData();
-  formData.append("file", fileContent, { filename: fileName });
-  formData.append("purpose", "ocr");
-  
-  const uploadResponse = await client.post("/files", formData, {
-    headers: {
-      ...formData.getHeaders()
-    }
-  });
-  
-  const fileId = uploadResponse.data.id;
-  
-  // Get signed URL
-  const signedUrlResponse = await client.get(`/files/${fileId}/signed_url`);
-  const signedUrl = signedUrlResponse.data.url;
-  
-  // Process OCR
-  const ocrResponse = await client.post("/ocr/process", {
-    model: "mistral-ocr-latest",
-    document: {
-      type: "document_url",
-      document_url: signedUrl
-    },
-    include_image_base64: saveImages
-  });
-  
-  const ocrResult = ocrResponse.data;
-  
-  // Process results based on output format
-  const result: MistralOCRResult = {
-    text_content: ""
-  };
-  
-  // Extract text content
-  const textContent = extractTextContent(ocrResult);
-  result.text_content = textContent;
-  
-  if (outputFormat === "full") {
-    result.ocr_result = ocrResult;
-  }
-  
-  if ((outputFormat === "full" || outputFormat === "images") && saveImages) {
-    // Create directories
-    if (!fs.existsSync(imagesDir)) {
-      fs.mkdirSync(imagesDir, { recursive: true });
+  try {
+    // Read PDF file
+    let pdfContent: Buffer;
+    if (pdfPath) {
+      pdfContent = fs.readFileSync(pdfPath);
+    } else if (pdfContentBase64) {
+      pdfContent = Buffer.from(pdfContentBase64, 'base64');
+    } else {
+      throw new Error("Either pdfPath or pdfContentBase64 must be provided");
     }
     
-    // Extract images
-    const savedImagesDict = extractImages(ocrResult, imagesDir);
-    result.saved_images = savedImagesDict;
-  }
-  
-  if ((outputFormat === "full" || outputFormat === "markdown") && saveImages) {
-    // Create directories for markdown
-    if (!fs.existsSync(markdownDir)) {
-      fs.mkdirSync(markdownDir, { recursive: true });
+    // Create form data
+    const formData = new FormData();
+    formData.append('file', pdfContent, {
+      filename: pdfPath ? path.basename(pdfPath) : 'document.pdf',
+      contentType: 'application/pdf'
+    });
+    
+    // Upload file
+    const uploadResponse = await axios.post(
+      'https://api.mistral.ai/v1/files',
+      formData,
+      {
+        headers: {
+          ...formData.getHeaders(),
+          'Authorization': `Bearer ${apiKey}`
+        }
+      }
+    );
+    
+    const fileId = uploadResponse.data.id;
+    
+    // Get signed URL
+    const signedUrlResponse = await axios.get(
+      `https://api.mistral.ai/v1/files/${fileId}/signed_url`,
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`
+        }
+      }
+    );
+    
+    const signedUrl = signedUrlResponse.data.url;
+    
+    // Process OCR
+    const ocrResponse = await axios.post(
+      'https://api.mistral.ai/v1/ocr/process',
+      {
+        model: "mistral-ocr-latest",
+        document: {
+          type: "document_url",
+          document_url: signedUrl
+        },
+        include_image_base64: saveImages
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        }
+      }
+    );
+    
+    const ocrResult = ocrResponse.data;
+    
+    // Process result based on output format
+    let result: MistralOCRResult = {
+      text_content: "",
+      metadata: {
+        source: "Mistral OCR",
+        timestamp: new Date().toISOString(),
+        pages: ocrResult.pages.length
+      }
+    };
+    
+    // Extract text content
+    result.text_content = ocrResult.pages
+      .map((page: any) => {
+        const blocks = page.blocks || [];
+        return blocks
+          .filter((block: any) => block.type === "text")
+          .map((block: any) => block.text)
+          .join("\n");
+      })
+      .join("\n\n");
+    
+    // Extract markdown content if requested
+    if (outputFormat === "markdown" || outputFormat === "full") {
+      result.markdown_content = ocrResult.pages
+        .map((page: any) => page.markdown || "")
+        .join("\n\n");
+      
+      // Save markdown files if requested
+      if (saveImages && markdownDir && result.markdown_content) {
+        const dirPath = markdownDir;
+        if (!fs.existsSync(dirPath)) {
+          fs.mkdirSync(dirPath, { recursive: true });
+        }
+        
+        const markdownPath = path.join(dirPath, `document.md`);
+        fs.writeFileSync(markdownPath, result.markdown_content);
+      }
     }
     
-    // Save markdown files
-    const savedImagesDict = result.saved_images || {};
-    const markdownFiles = saveMarkdownFiles(ocrResult, markdownDir, savedImagesDict);
-    result.markdown_files = markdownFiles;
+    // Extract images if requested
+    if ((outputFormat === "images" || outputFormat === "full") && saveImages) {
+      result.images = {};
+      
+      // Create images directory if it doesn't exist
+      if (imagesDir && !fs.existsSync(imagesDir)) {
+        fs.mkdirSync(imagesDir, { recursive: true });
+      }
+      
+      // Process images from each page
+      ocrResult.pages.forEach((page: any, pageIndex: number) => {
+        const images = page.images || [];
+        
+        images.forEach((img: any, imgIndex: number) => {
+          const imgId = img.id;
+          const imgBase64 = img.image_base64;
+          
+          if (imgBase64 && !imgBase64.endsWith("...")) {
+            // Extract base64 data
+            let base64Data = imgBase64;
+            if (base64Data.startsWith("data:")) {
+              base64Data = base64Data.split(",")[1];
+            }
+            
+            // Save image if requested
+            if (saveImages && imagesDir) {
+              const imgPath = path.join(imagesDir, `page${pageIndex + 1}_image${imgIndex + 1}.png`);
+              fs.writeFileSync(imgPath, Buffer.from(base64Data, 'base64'));
+            }
+            
+            // Add to result
+            if (result.images) {
+              result.images[imgId] = imgBase64;
+            }
+          }
+        });
+      });
+    }
+    
+    // Include full result if requested
+    if (outputFormat === "full") {
+      result.full_result = ocrResult;
+    }
+    
+    return result;
+  } catch (error: any) {
+    throw new Error(`Mistral OCR processing failed: ${error.message}`);
   }
-  
-  return result;
 };
-
-// Helper functions
-function extractTextContent(ocrResult: any): string {
-  const textContent: string[] = [];
-  
-  for (const page of ocrResult.pages) {
-    for (const block of page.blocks || []) {
-      if (block.type === "text") {
-        textContent.push(block.text || "");
-      }
-    }
-  }
-  
-  return textContent.join("\n");
-}
-
-function extractImages(ocrResult: any, imagesDir: string): Record<number, Record<string, string>> {
-  const allSavedImages: Record<number, Record<string, string>> = {};
-  
-  for (const page of ocrResult.pages) {
-    const pageIndex = page.index;
-    const pageImages = page.images || [];
-    const savedImages: Record<string, string> = {};
-    
-    for (const img of pageImages) {
-      const imgId = img.id;
-      const imgBase64 = img.image_base64;
-      
-      if (!imgBase64 || imgBase64 === "..." || imgBase64.endsWith("...")) {
-        continue;
-      }
-      
-      try {
-        let base64Data = imgBase64;
-        if (imgBase64.startsWith("data:")) {
-          base64Data = imgBase64.split(",", 2)[1];
-        }
-        
-        const imgData = Buffer.from(base64Data, 'base64');
-        let imgExtension = ".jpg";
-        
-        if (imgBase64.startsWith("data:image/")) {
-          const formatPart = imgBase64.split(";", 1)[0];
-          imgExtension = "." + formatPart.split("/", 2)[1];
-        }
-        
-        let imgPath: string;
-        if (imgId.toLowerCase().endsWith(".jpg") || imgId.toLowerCase().endsWith(".jpeg") || 
-            imgId.toLowerCase().endsWith(".png") || imgId.toLowerCase().endsWith(".gif") || 
-            imgId.toLowerCase().endsWith(".bmp") || imgId.toLowerCase().endsWith(".webp")) {
-          imgPath = path.join(imagesDir, imgId);
-        } else {
-          imgPath = path.join(imagesDir, `${imgId}${imgExtension}`);
-        }
-        
-        fs.writeFileSync(imgPath, imgData);
-        savedImages[imgId] = imgPath;
-      } catch (error) {
-        console.error(`Failed to save image ${imgId}: ${error}`);
-      }
-    }
-    
-    allSavedImages[pageIndex] = savedImages;
-  }
-  
-  return allSavedImages;
-}
-
-function saveMarkdownFiles(ocrResult: any, markdownDir: string, savedImagesDict: Record<number, Record<string, string>>): Record<string, string> {
-  const resultFiles: Record<string, string> = {};
-  
-  // Save individual pages
-  for (const page of ocrResult.pages) {
-    const pageIndex = page.index;
-    let markdownText = page.markdown;
-    const savedImages = savedImagesDict[pageIndex] || {};
-    const imageIds = Object.keys(savedImages);
-    
-    if (imageIds.length > 0) {
-      markdownText = fixImageReferences(markdownText, imageIds);
-    }
-    
-    const outputFile = path.join(markdownDir, `page_${pageIndex}.md`);
-    fs.writeFileSync(outputFile, markdownText, 'utf8');
-    
-    resultFiles[`page_${pageIndex}`] = outputFile;
-  }
-  
-  // Save combined markdown
-  const combinedFile = path.join(markdownDir, "combined.md");
-  const combinedContent: string[] = [];
-  
-  const allImageIds: string[] = [];
-  for (const pageImages of Object.values(savedImagesDict)) {
-    allImageIds.push(...Object.keys(pageImages));
-  }
-  
-  const uniqueImageIds = [...new Set(allImageIds)];
-  
-  for (const page of ocrResult.pages.sort((a: any, b: any) => a.index - b.index)) {
-    let pageMarkdown = page.markdown;
-    
-    if (uniqueImageIds.length > 0) {
-      pageMarkdown = fixImageReferences(pageMarkdown, uniqueImageIds);
-    }
-    
-    combinedContent.push(pageMarkdown);
-    combinedContent.push("\n\n");
-  }
-  
-  fs.writeFileSync(combinedFile, combinedContent.join(""), 'utf8');
-  resultFiles["combined"] = combinedFile;
-  
-  return resultFiles;
-}
-
-function fixImageReferences(markdownText: string, imageIds: string[]): string {
-  let result = markdownText;
-  
-  for (const imgId of imageIds) {
-    const correctPath = `../images/${imgId}`;
-    
-    // Pattern 1: double bracket pattern
-    result = result.replace(
-      new RegExp(`!\\[(.*?)\\]\\([^)]*${escapeRegExp(imgId)}[^)]*\\)(?:\\([^)]*${escapeRegExp(imgId)}[^)]*\\))+`, 'g'),
-      `![${imgId}](${correctPath})`
-    );
-    
-    // Pattern 2: single bracket pattern
-    result = result.replace(
-      new RegExp(`!\\[(.*?)\\]\\([^)]*${escapeRegExp(imgId)}[^)]*\\)`, 'g'),
-      `![${imgId}](${correctPath})`
-    );
-    
-    // Pattern 3: no bracket pattern
-    result = result.replace(
-      new RegExp(`!\\[${escapeRegExp(imgId)}\\](?!\\()`, 'g'),
-      `![${imgId}](${correctPath})`
-    );
-  }
-  
-  return result;
-}
-
-function escapeRegExp(string: string): string {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 const mistralOcrAgentInfo: AgentFunctionInfo = {
   name: "mistralOcrAgent",
@@ -305,11 +241,7 @@ const mistralOcrAgentInfo: AgentFunctionInfo = {
         type: "string",
         description: "Base64-encoded PDF content"
       }
-    },
-    oneOf: [
-      { required: ["pdfPath"] },
-      { required: ["pdfContentBase64"] }
-    ]
+    }
   },
   output: {
     type: "object",
@@ -318,17 +250,31 @@ const mistralOcrAgentInfo: AgentFunctionInfo = {
         type: "string",
         description: "Extracted text content"
       },
-      saved_images: {
-        type: "object",
-        description: "Dictionary of saved images"
+      markdown_content: {
+        type: "string",
+        description: "Markdown representation of the document"
       },
-      markdown_files: {
+      images: {
         type: "object",
-        description: "Dictionary of saved markdown files"
+        description: "Extracted images as base64 strings"
       },
-      ocr_result: {
+      full_result: {
         type: "object",
         description: "Full OCR result"
+      },
+      metadata: {
+        type: "object",
+        properties: {
+          source: {
+            type: "string"
+          },
+          timestamp: {
+            type: "string"
+          },
+          pages: {
+            type: "number"
+          }
+        }
       }
     },
     required: ["text_content"]
@@ -338,11 +284,12 @@ const mistralOcrAgentInfo: AgentFunctionInfo = {
     properties: {
       outputFormat: {
         type: "string",
-        description: "Output format (text, markdown, images, full)"
+        enum: ["full", "text", "markdown", "images"],
+        description: "Output format"
       },
       saveImages: {
         type: "boolean",
-        description: "Whether to save images"
+        description: "Whether to save images to disk"
       },
       imagesDir: {
         type: "string",
@@ -355,6 +302,10 @@ const mistralOcrAgentInfo: AgentFunctionInfo = {
       apiKey: {
         type: "string",
         description: "Mistral API key"
+      },
+      debug: {
+        type: "boolean",
+        description: "Enable debug mode"
       }
     }
   },
@@ -364,15 +315,21 @@ const mistralOcrAgentInfo: AgentFunctionInfo = {
         pdfPath: "/path/to/document.pdf"
       },
       params: {
-        outputFormat: "text"
+        outputFormat: "text",
+        saveImages: false
       },
       result: {
-        text_content: "Sample extracted text from the PDF document."
+        text_content: "Sample document text content",
+        metadata: {
+          source: "Mistral OCR",
+          timestamp: "2023-07-01T12:34:56.789Z",
+          pages: 1
+        }
       }
     }
   ],
-  description: "Extracts text and images from PDF documents using Mistral OCR",
-  category: ["ai", "service"],
+  description: "Processes PDF documents using Mistral OCR to extract text, markdown, and images",
+  category: ["ai", "service", "document"],
   author: "Receptron Team",
   repository: "https://github.com/receptron/graphai",
   license: "MIT",

@@ -1,23 +1,27 @@
 import { AgentFunction, AgentFunctionInfo } from "graphai";
 type MistralOCRInputs = {
-    outputFormat?: string;
+    pdfPath?: string;
+    pdfContentBase64?: string;
+};
+type MistralOCRParams = {
+    outputFormat?: "full" | "text" | "markdown" | "images";
     saveImages?: boolean;
     imagesDir?: string;
     markdownDir?: string;
-};
-type MistralOCRConfig = {
     apiKey?: string;
+    debug?: boolean;
 };
-type MistralOCRParams = MistralOCRInputs & MistralOCRConfig;
 type MistralOCRResult = {
     text_content: string;
-    saved_images?: Record<number, Record<string, string>>;
-    markdown_files?: Record<string, string>;
-    ocr_result?: any;
+    markdown_content?: string;
+    images?: Record<string, string>;
+    full_result?: any;
+    metadata?: {
+        source: string;
+        timestamp: string;
+        pages: number;
+    };
 };
-export declare const mistralOcrAgent: AgentFunction<MistralOCRParams, MistralOCRResult, {
-    pdfPath: string;
-    pdfContentBase64?: string;
-}, MistralOCRConfig>;
+export declare const mistralOcrAgent: AgentFunction<MistralOCRParams, MistralOCRResult, MistralOCRInputs>;
 declare const mistralOcrAgentInfo: AgentFunctionInfo;
 export default mistralOcrAgentInfo;
