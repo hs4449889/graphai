@@ -1,0 +1,42 @@
+{
+  "name": "@graphai/ai_service_agents",
+  "version": "1.0.0",
+  "description": "AI service agents for GraphAI including Response API and Mistral OCR.",
+  "main": "lib/index.js",
+  "files": [
+    "./lib"
+  ],
+  "scripts": {
+    "build": "rm -rf lib/* && tsc && tsc-alias",
+    "eslint": "eslint",
+    "doc": "npm run examplesDoc && npx agentdoc",
+    "examplesDoc": "npx ts-node -r tsconfig-paths/register tests/examples.ts",
+    "format": "prettier --write '{src,tests,samples}/**/*.ts'",
+    "test": "node --test -r tsconfig-paths/register --require ts-node/register ./tests/test_*.ts",
+    "b": "yarn run format && yarn run eslint && yarn run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/receptron/graphai"
+  },
+  "author": "Receptron Team",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/receptron/graphai/issues"
+  },
+  "homepage": "https://github.com/receptron/graphai/blob/main/agents/ai_service_agents/README.md",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "form-data": "^4.0.0",
+    "graphai": "file:../../packages/graphai"
+  },
+  "types": "./lib/index.d.ts",
+  "directories": {
+    "lib": "lib"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "axios": "^1.8.3",
+    "form-data": "^4.0.2"
+  }
+}

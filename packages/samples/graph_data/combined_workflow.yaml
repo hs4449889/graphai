@@ -1,0 +1,68 @@
+version: 0.5
+nodes:
+  # Configuration
+  config:
+    value:
+      ocrConfig:
+        outputFormat: "text"
+        saveImages: false
+        apiKey: "${MISTRAL_API_KEY}"
+      apiConfig:
+        model: "response-1"
+        apiKey: "${RESPONSE_API_KEY}"
+  
+  # File input
+  pdfPath:
+    agent: textInputAgent
+    params:
+      message: "Enter PDF path:"
+  
+  # Process OCR
+  ocrResult:
+    agent: mistralOcrAgent
+    params:
+      outputFormat: ":config.ocrConfig.outputFormat"
+      saveImages: ":config.ocrConfig.saveImages"
+      imagesDir: "output/images"
+      markdownDir: "output/markdown"
+      apiKey: ":config.ocrConfig.apiKey"
+    inputs:
+      pdfPath: ":pdfPath.text"
+  
+  # User prompt
+  userPrompt:
+    agent: textInputAgent
+    params:
+      message: "Enter your question about the document:"
+  
+  # Prepare request data
+  requestData:
+    agent: copyAgent
+    inputs:
+      data:
+        model: ":config.apiConfig.model"
+        messages:
+          - role: "system"
+            content: "You are an assistant that helps analyze documents. Use the following document content to answer the user's question: ${:ocrResult.text_content}"
+          - role: "user"
+            content: ":userPrompt.text"
+  
+  # Call Response API
+  responseApi:
+    agent: responseApiAgent
+    params:
+      endpoint: "chat/completions"
+      method: "POST"
+      maxRetries: 3
+      apiKey: ":config.apiConfig.apiKey"
+    inputs:
+      requestData: ":requestData.data"
+  
+  # Display response
+  output:
+    agent: stringTemplateAgent
+    inputs:
+      text: "Response: ${:responseApi.text}\n\nResearch URLs:\n${:responseApi.research_urls.join('\n')}"
+    console:
+      after: true
+    isResult: true

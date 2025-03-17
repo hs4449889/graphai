@@ -1,0 +1,42 @@
+version: 0.5
+nodes:
+  # Configuration
+  config:
+    value:
+      model: "response-1"
+      apiKey: "${RESPONSE_API_KEY}"
+  
+  # User prompt
+  userPrompt:
+    agent: textInputAgent
+    params:
+      message: "Enter your question:"
+  
+  # Prepare request data
+  requestData:
+    agent: copyAgent
+    inputs:
+      data:
+        model: ":config.model"
+        messages:
+          - role: "user"
+            content: ":userPrompt.text"
+  
+  # Call Response API
+  responseApi:
+    agent: responseApiAgent
+    params:
+      endpoint: "chat/completions"
+      method: "POST"
+      maxRetries: 3
+    inputs:
+      requestData: ":requestData.data"
+  
+  # Display response
+  output:
+    agent: stringTemplateAgent
+    inputs:
+      text: "Response: ${:responseApi.text}\n\nResearch URLs:\n${:responseApi.research_urls.join('\n')}"
+    console:
+      after: true
+    isResult: true
