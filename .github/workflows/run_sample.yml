@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }} # PRの最新コミットを使用
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
@@ -34,8 +36,16 @@ jobs:
       - name: Build packages
         run: yarn run build
 
-      - name: Install GraphAI CLI
-        run: npm i -g @receptron/graphai_cli
+      - name: Link local packages
+        run: |
+          # PRの変更を反映したローカルパッケージをリンク
+          yarn link-all
+
+      - name: Install GraphAI CLI from current PR
+        run: |
+          # PR内のGraphAI CLIをグローバルにインストール
+          cd packages/graphai_cli
+          npm link
 
       - name: Make scripts executable
         run: chmod +x .github/scripts/run_samples.sh
@@ -44,6 +54,8 @@ jobs:
         run: |
           echo "Checking for .github/scripts/tutorial_yml directory:"
           ls -la .github/scripts/tutorial_yml/ || echo ".github/scripts/tutorial_yml directory not found"
+          echo "Installed GraphAI CLI version:"
+          graphai --version
 
       - name: Run samples
         env:
@@ -82,6 +94,8 @@ jobs:
       - name: Summarize results
         run: |
           echo "## GraphAI サンプル実行結果" > summary.md
+          echo "" >> summary.md
+          echo "**PR #${{ github.event.pull_request.number }} の変更を反映したGraphAIでテスト実行**" >> summary.md
           echo "" >> summary.md
 
           # 全体サマリーの作成
