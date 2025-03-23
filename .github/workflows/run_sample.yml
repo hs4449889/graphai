@@ -6,7 +6,7 @@ on:
       - "packages/**"
       - "agents/**"
       - "llm_agents/**"
-      - "docs/guide/tutorial.md"
+      - "docs/guide/tutorial.md"  # Tutorial.mdへのパスを修正
   workflow_dispatch: # 手動実行用
 
 jobs:
@@ -41,11 +41,17 @@ jobs:
       - name: Make scripts executable
         run: chmod +x .github/scripts/run_samples.sh
 
+      - name: Debug directory structure
+        run: |
+          echo "Checking for docs/Tutorial.md:"
+          ls -la docs/ || echo "docs directory not found"
+          find . -name "Tutorial.md" || echo "Tutorial.md not found"
+
       - name: Run samples (${{ matrix.category }})
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: ./.github/scripts/run_samples.sh --output github-actions --category ${{ matrix.category }} --timeout 180
+        run: ./.github/scripts/run_samples.sh --output github-actions --category ${{ matrix.category }} --timeout 180 --verbose
         continue-on-error: true
 
       - name: Upload test results

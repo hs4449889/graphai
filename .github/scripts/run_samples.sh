@@ -24,7 +24,7 @@ TIMEOUT=300  # 5分
 ENV_FILE=""
 OUTPUT_FORMAT="text"  # text, json, github-actions
 CATEGORY="all"  # all, tutorial, samples
-SPECIFIC_SAMPLE=""
+SPECIFIC_SAMPLE=""  # 明示的に空文字列に初期化
 USE_CACHE=false
 
 # 色の定義（CI環境では無効化）
@@ -134,6 +134,16 @@ parse_args() {
     echo "エラー: 無効なカテゴリです。all, tutorial, samplesのいずれかを指定してください。"
     exit 1
   fi
+  
+  # デバッグ情報の出力
+  if [[ "${OUTPUT_FORMAT}" == "text" || "${OUTPUT_FORMAT}" == "github-actions" ]]; then
+    echo "設定パラメータ:"
+    echo "  カテゴリ: ${CATEGORY}"
+    echo "  特定サンプル: ${SPECIFIC_SAMPLE}"
+    echo "  並列実行: ${PARALLEL}"
+    echo "  キャッシュ: ${USE_CACHE}"
+    echo "  タイムアウト: ${TIMEOUT}秒"
+  fi
 }
 
 # 環境のセットアップ
@@ -210,11 +220,8 @@ load_cache() {
     fi
   else
     # キャッシュ変数の初期化
-    # macOSの古いBashでは連想配列がサポートされていないため、通常の配列を使用
-    YAML_CACHE_KEYS=()
-    YAML_CACHE_VALUES=()
-    TS_CACHE_KEYS=()
-    TS_CACHE_VALUES=()
+    declare -A YAML_CACHE
+    declare -A TS_CACHE
   fi
 }
 
@@ -272,10 +279,20 @@ extract_yaml_samples() {
   local line_num=0
   local start_line=0
   
+  # ファイルの存在確認
+  if [[ ! -f "${TUTORIAL_MD}" ]]; then
+    if [[ "${OUTPUT_FORMAT}" == "text" ]]; then
+      echo -e "${RED}エラー: ${TUTORIAL_MD} ファイルが見つかりません。${NC}"
+    elif [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
+      echo "::error::${TUTORIAL_MD} ファイルが見つかりません。"
+    fi
+    return
+  fi
+  
   # 結果ファイルの初期化
   echo "sample,section,status,duration,hash" > "${RESULTS_DIR}/yaml_results.csv"
   
-  while IFS= read -r line; do
+  while IFS= read -r line || [[ -n "$line" ]]; do
     ((line_num++))
     
     # セクションヘッダーの検出
@@ -298,17 +315,17 @@ extract_yaml_samples() {
       
       # セクション名からファイル名を生成
       local section_slug=$(echo "${yaml_section}" | tr '[:upper:]' '[:lower:]' | tr ' ' '_')
-      local yaml_file="${TEMP_DIR}/tutorial_${section_slug}_${yaml_count}.yaml"
+      local yaml_file="${section_slug}_${yaml_count}.yaml"
       
       # YAMLコンテンツをファイルに保存
-      echo "${yaml_content}" > "${yaml_file}"
+      echo "${yaml_content}" > "${TEMP_DIR}/${yaml_file}"
       
       # ファイルのハッシュを計算
-      local file_hash=$(calculate_hash "${yaml_file}")
+      local file_hash=$(calculate_hash "${TEMP_DIR}/${yaml_file}")
       
       # 特定のサンプルが指定されている場合、一致するかチェック
       local should_run=true
-      if [[ -n "${SPECIFIC_SAMPLE}" && "${SPECIFIC_SAMPLE}" != "" ]]; then
+      if [[ -n "${SPECIFIC_SAMPLE}" ]]; then
         local base_name=$(basename "${yaml_file}")
         if [[ "${base_name}" != *"${SPECIFIC_SAMPLE}"* && "${yaml_section}" != *"${SPECIFIC_SAMPLE}"* ]]; then
           should_run=false
@@ -316,30 +333,30 @@ extract_yaml_samples() {
       fi
       
       # キャッシュをチェック
-      if [[ "${USE_CACHE}" == "true" && -n "${YAML_CACHE[${yaml_file}]}" && "${YAML_CACHE[${yaml_file}]}" == "${file_hash}" ]]; then
+      if [[ "${USE_CACHE}" == "true" && -n "${YAML_CACHE[${TEMP_DIR}/${yaml_file}]}" && "${YAML_CACHE[${TEMP_DIR}/${yaml_file}]}" == "${file_hash}" ]]; then
         if [[ "${OUTPUT_FORMAT}" == "text" ]]; then
           echo -e "  スキップ: ${YELLOW}${yaml_file}${NC} (キャッシュ済み)"
         elif [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
-          echo "  スキップ: $(basename "${yaml_file}") (キャッシュ済み)"
+          echo "  スキップ: ${yaml_file} (キャッシュ済み)"
         fi
-        echo "$(basename "${yaml_file}"),${yaml_section},cached,0,${file_hash}" >> "${RESULTS_DIR}/yaml_results.csv"
+        echo "${yaml_file},${yaml_section},cached,0,${file_hash}" >> "${RESULTS_DIR}/yaml_results.csv"
         continue
       fi
       
       # サンプル情報を記録
       if [[ "${should_run}" == "true" ]]; then
-        echo "$(basename "${yaml_file}"),${yaml_section},pending,0,${file_hash}" >> "${RESULTS_DIR}/yaml_results.csv"
+        echo "${yaml_file},${yaml_section},pending,0,${file_hash}" >> "${RESULTS_DIR}/yaml_results.csv"
         if [[ "${OUTPUT_FORMAT}" == "text" ]]; then
-          echo -e "  抽出: ${YELLOW}$(basename "${yaml_file}")${NC} (セクション: ${BLUE}${yaml_section}${NC})"
+          echo -e "  抽出: ${YELLOW}${yaml_file}${NC} (セクション: ${BLUE}${yaml_section}${NC})"
         elif [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
-          echo "  抽出: $(basename "${yaml_file}") (セクション: ${yaml_section})"
+          echo "  抽出: ${yaml_file} (セクション: ${yaml_section})"
         fi
       else
-        echo "$(basename "${yaml_file}"),${yaml_section},skipped,0,${file_hash}" >> "${RESULTS_DIR}/yaml_results.csv"
+        echo "${yaml_file},${yaml_section},skipped,0,${file_hash}" >> "${RESULTS_DIR}/yaml_results.csv"
         if [[ "${OUTPUT_FORMAT}" == "text" ]]; then
-          echo -e "  スキップ: ${YELLOW}$(basename "${yaml_file}")${NC} (フィルタ対象外)"
+          echo -e "  スキップ: ${YELLOW}${yaml_file}${NC} (フィルタ対象外)"
         elif [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
-          echo "  スキップ: $(basename "${yaml_file}") (フィルタ対象外)"
+          echo "  スキップ: ${yaml_file} (フィルタ対象外)"
         fi
       fi
       
@@ -452,12 +469,22 @@ prepare_ts_samples() {
     local sample_name="${sample_info#*:}"
     local full_path="${SAMPLES_DIR}/${sample_path}"
     
+    # ファイルの存在確認
+    if [[ ! -f "${full_path}" ]]; then
+      if [[ "${OUTPUT_FORMAT}" == "text" ]]; then
+        echo -e "${YELLOW}警告: ${full_path} ファイルが見つかりません。スキップします。${NC}"
+      elif [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
+        echo "::warning::${full_path} ファイルが見つかりません。スキップします。"
+      fi
+      continue
+    fi
+    
     # ファイルのハッシュを計算
     local file_hash=$(calculate_hash "${full_path}")
     
     # 特定のサンプルが指定されている場合、一致するかチェック
     local should_run=true
-    if [[ -n "${SPECIFIC_SAMPLE}" && "${SPECIFIC_SAMPLE}" != "" ]]; then
+    if [[ -n "${SPECIFIC_SAMPLE}" ]]; then
       if [[ "${sample_path}" != *"${SPECIFIC_SAMPLE}"* && "${sample_name}" != *"${SPECIFIC_SAMPLE}"* ]]; then
         should_run=false
       fi
@@ -529,7 +556,7 @@ run_ts_sample() {
     elif [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
       echo "::notice::成功: ${sample_path} (${duration}秒)"
     fi
-    sed -i "s/^${sample_path},${sample_name},pending,0,${file_hash}/${sample_path},${sample_name},success,${duration},${file_hash}/" "${RESULTS_DIR}/ts_results.csv"
+    sed -i "s|^${sample_path},${sample_name},pending,0,${file_hash}|${sample_path},${sample_name},success,${duration},${file_hash}|" "${RESULTS_DIR}/ts_results.csv"
     if [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
       echo "::endgroup::"
     fi
@@ -540,7 +567,7 @@ run_ts_sample() {
     elif [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
       echo "::warning::タイムアウト: ${sample_path} (${TIMEOUT}秒)"
     fi
-    sed -i "s/^${sample_path},${sample_name},pending,0,${file_hash}/${sample_path},${sample_name},timeout,${TIMEOUT},${file_hash}/" "${RESULTS_DIR}/ts_results.csv"
+    sed -i "s|^${sample_path},${sample_name},pending,0,${file_hash}|${sample_path},${sample_name},timeout,${TIMEOUT},${file_hash}|" "${RESULTS_DIR}/ts_results.csv"
     if [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
       echo "::endgroup::"
     fi
@@ -561,7 +588,7 @@ run_ts_sample() {
         done
       fi
     fi
-    sed -i "s/^${sample_path},${sample_name},pending,0,${file_hash}/${sample_path},${sample_name},failure,${duration},${file_hash}/" "${RESULTS_DIR}/ts_results.csv"
+    sed -i "s|^${sample_path},${sample_name},pending,0,${file_hash}|${sample_path},${sample_name},failure,${duration},${file_hash}|" "${RESULTS_DIR}/ts_results.csv"
     if [[ "${OUTPUT_FORMAT}" == "github-actions" ]]; then
       echo "::endgroup::"
     fi
