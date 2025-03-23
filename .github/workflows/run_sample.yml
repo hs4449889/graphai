@@ -49,7 +49,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: ./.github/scripts/run_samples.sh --output github-actions --timeout 180 --verbose
+        run: ./.github/scripts/run_samples.sh
         continue-on-error: true
 
       - name: Upload test results
@@ -90,40 +90,34 @@ jobs:
           echo "" >> summary.md
 
           # 全体の統計情報を計算
-          yaml_total=0
-          yaml_success=0
-          yaml_failure=0
-          yaml_timeout=0
-          yaml_cached=0
-          yaml_skipped=0
+          total=0
+          success=0
+          failure=0
 
-          if [ -f artifacts/test-results/yaml_results.csv ]; then
-            yaml_total=$(grep -v "^sample" artifacts/test-results/yaml_results.csv | wc -l)
-            yaml_success=$(grep ",success," artifacts/test-results/yaml_results.csv | wc -l)
-            yaml_failure=$(grep ",failure," artifacts/test-results/yaml_results.csv | wc -l)
-            yaml_timeout=$(grep ",timeout," artifacts/test-results/yaml_results.csv | wc -l)
-            yaml_cached=$(grep ",cached," artifacts/test-results/yaml_results.csv | wc -l)
-            yaml_skipped=$(grep ",skipped," artifacts/test-results/yaml_results.csv | wc -l)
+          if [ -f artifacts/test-results/results.csv ]; then
+            total=$(grep -v "^sample" artifacts/test-results/results.csv | wc -l)
+            success=$(grep ",success," artifacts/test-results/results.csv | wc -l)
+            failure=$(grep ",failure," artifacts/test-results/results.csv | wc -l)
           fi
 
           # 成功率の計算
-          yaml_success_rate=0
-          if [ $((yaml_total - yaml_skipped)) -gt 0 ]; then
-            yaml_success_rate=$(echo "scale=2; ${yaml_success} * 100 / $((yaml_total - yaml_skipped))" | bc)
+          success_rate=0
+          if [ ${total} -gt 0 ]; then
+            success_rate=$(echo "scale=2; ${success} * 100 / ${total}" | bc)
           fi
 
           # サマリーテーブルの作成
-          echo "| カテゴリ | 成功率 | 成功 | 失敗 | タイムアウト | キャッシュ済み | スキップ | 合計 |" >> summary.md
-          echo "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |" >> summary.md
-          echo "| YAMLサンプル | ${yaml_success_rate}% | ${yaml_success} | ${yaml_failure} | ${yaml_timeout} | ${yaml_cached} | ${yaml_skipped} | ${yaml_total} |" >> summary.md
+          echo "| 成功率 | 成功 | 失敗 | 合計 |" >> summary.md
+          echo "| :---: | :---: | :---: | :---: |" >> summary.md
+          echo "| ${success_rate}% | ${success} | ${failure} | ${total} |" >> summary.md
           echo "" >> summary.md
           echo "</details>" >> summary.md
           echo "" >> summary.md
 
           # 詳細な実行結果
-          if [ -f artifacts/test-results/yaml_results.csv ]; then
+          if [ -f artifacts/test-results/results.csv ]; then
             echo "<details>" >> summary.md
-            echo "<summary><b>📘 YAMLサンプル実行結果</b></summary>" >> summary.md
+            echo "<summary><b>📘 サンプル実行結果</b></summary>" >> summary.md
             echo "" >> summary.md
             
             # 詳細な実行結果テーブル
@@ -132,17 +126,11 @@ jobs:
             echo "| サンプル | ステータス | 実行時間 |" >> summary.md
             echo "| :--- | :---: | :---: |" >> summary.md
             
-            grep -v "^sample" artifacts/test-results/yaml_results.csv | sort | while IFS=, read -r sample status duration hash; do
+            grep -v "^sample" artifacts/test-results/results.csv | sort | while IFS=, read -r sample status duration; do
               if [ "$status" = "success" ]; then
                 status_icon="✅ 成功"
-              elif [ "$status" = "failure" ]; then
-                status_icon="❌ 失敗"
-              elif [ "$status" = "timeout" ]; then
-                status_icon="⏱️ タイムアウト"
-              elif [ "$status" = "cached" ]; then
-                status_icon="⚡ キャッシュ済み"
               else
-                status_icon="⏭️ スキップ"
+                status_icon="❌ 失敗"
               fi
               
               echo "| ${sample} | ${status_icon} | ${duration}秒 |" >> summary.md
@@ -154,7 +142,7 @@ jobs:
           fi
 
           # 失敗したサンプルがある場合は特別なセクションを追加
-          if [ -f artifacts/test-results/yaml_results.csv ] && grep -q ",failure," artifacts/test-results/yaml_results.csv; then
+          if [ -f artifacts/test-results/results.csv ] && grep -q ",failure," artifacts/test-results/results.csv; then
             echo "<details>" >> summary.md
             echo "<summary><b>🔍 失敗したサンプル</b></summary>" >> summary.md
             echo "" >> summary.md
@@ -162,12 +150,8 @@ jobs:
             echo "| サンプル | ステータス |" >> summary.md
             echo "| :--- | :---: |" >> summary.md
             
-            grep ",failure," artifacts/test-results/yaml_results.csv | while IFS=, read -r sample status duration hash; do
+            grep ",failure," artifacts/test-results/results.csv | while IFS=, read -r sample status duration; do
               echo "| ${sample} | ❌ 失敗 |" >> summary.md
-            done
-            
-            grep ",timeout," artifacts/test-results/yaml_results.csv | while IFS=, read -r sample status duration hash; do
-              echo "| ${sample} | ⏱️ タイムアウト |" >> summary.md
             done
             
             echo "" >> summary.md
@@ -184,13 +168,13 @@ jobs:
 
       - name: Prepare test results directory
         run: |
-          mkdir -p test_results/logs/yaml_samples
+          mkdir -p test_results/logs
           
-          # YAMLサンプルの結果をコピー
-          if [ -f artifacts/test-results/yaml_results.csv ]; then
-            cp artifacts/test-results/yaml_results.csv test_results/
-            if [ -d artifacts/test-results/logs/yaml_samples ]; then
-              cp -r artifacts/test-results/logs/yaml_samples/* test_results/logs/yaml_samples/
+          # 実行結果をコピー
+          if [ -f artifacts/test-results/results.csv ]; then
+            cp artifacts/test-results/results.csv test_results/
+            if [ -d artifacts/test-results/logs ]; then
+              cp -r artifacts/test-results/logs/* test_results/logs/
             fi
           fi
 
