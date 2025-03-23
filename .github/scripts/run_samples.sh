@@ -111,8 +111,15 @@ for yaml_file in "${YAML_DIR}"/*.yml "${YAML_DIR}"/*.yaml; do
   end_time=$(date +%s)
   duration=$((end_time - start_time))
   
+  # ログファイルにエラーが含まれるかチェック
+  if grep -i "error" "${log_file}" > /dev/null; then
+    has_error=true
+  else
+    has_error=false
+  fi
+
   # 結果の処理
-  if [[ ${exit_code} -eq 0 ]]; then
+  if [[ ${exit_code} -eq 0 && "${has_error}" == "false" ]]; then
     ((success_count++))
     echo -e "${GREEN}成功: ${base_name} (${duration}秒)${NC}"
     echo "${base_name},success,${duration}" >> "${RESULTS_DIR}/results.csv"
@@ -124,11 +131,16 @@ for yaml_file in "${YAML_DIR}"/*.yml "${YAML_DIR}"/*.yaml; do
     echo -e "${YELLOW}エラーログ (最後の5行):${NC}"
     tail -n 5 "${log_file}"
   else
+    # 失敗またはエラーを含む場合
     ((failure_count++))
-    echo -e "${RED}失敗: ${base_name} (${duration}秒)${NC}"
+    if [[ ${exit_code} -ne 0 ]]; then
+      echo -e "${RED}失敗: ${base_name} (${duration}秒) - 終了コード: ${exit_code}${NC}"
+    else
+      echo -e "${RED}失敗: ${base_name} (${duration}秒) - ログにエラーが含まれています${NC}"
+    fi
     echo "${base_name},failure,${duration}" >> "${RESULTS_DIR}/results.csv"
-    echo -e "${YELLOW}エラーログ (最後の5行):${NC}"
-    tail -n 5 "${log_file}"
+    echo -e "${YELLOW}エラーログ (最後の10行):${NC}"
+    tail -n 10 "${log_file}"
   fi
 done
 

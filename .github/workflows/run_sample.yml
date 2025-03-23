@@ -147,11 +147,19 @@ jobs:
             echo "<summary><b>🔍 失敗したサンプル</b></summary>" >> summary.md
             echo "" >> summary.md
             
-            echo "| サンプル | ステータス |" >> summary.md
-            echo "| :--- | :---: |" >> summary.md
+            echo "| サンプル | ステータス | ログ |" >> summary.md
+            echo "| :--- | :---: | :--- |" >> summary.md
             
             grep ",failure," artifacts/test-results/results.csv | while IFS=, read -r sample status duration; do
-              echo "| ${sample} | ❌ 失敗 |" >> summary.md
+              # ログファイルの内容を取得
+              log_content=""
+              log_file="artifacts/test-results/logs/${sample}.log"
+              if [ -f "${log_file}" ]; then
+                # ログファイルの内容をエスケープして変数に格納
+                log_content=$(cat "${log_file}" | sed 's/$/\\n/' | tr -d '\n')
+              fi
+              
+              echo "| ${sample} | ❌ 失敗 | <details><summary>ログを表示</summary><pre>${log_content}</pre></details> |" >> summary.md
             done
             
             echo "" >> summary.md
