@@ -1,0 +1,295 @@
+name: Check GraphAI Samples
+
+on:
+  pull_request:
+    paths:
+      - "packages/**"
+      - "agents/**"
+      - "llm_agents/**"
+      - "docs/guide/tutorial.md"
+  workflow_dispatch: # 手動実行用
+
+jobs:
+  run-samples:
+    name: Run GraphAI Samples
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        category: ["tutorial", "samples"]
+        node-version: [20.x]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Build packages
+        run: yarn run build
+
+      - name: Install GraphAI CLI
+        run: npm i -g @receptron/graphai_cli
+
+      - name: Make scripts executable
+        run: chmod +x .github/scripts/run_samples.sh
+
+      - name: Run samples (${{ matrix.category }})
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: ./.github/scripts/run_samples.sh --output github-actions --category ${{ matrix.category }} --parallel --jobs 4 --timeout 180
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.category }}
+          path: test_results/
+          retention-days: 7
+
+  summarize-results:
+    name: Summarize Results
+    needs: run-samples
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Summarize results
+        run: |
+          echo "## GraphAI サンプル実行結果" > summary.md
+          echo "" >> summary.md
+
+          # 全体サマリーの作成
+          echo "<details open>" >> summary.md
+          echo "<summary><b>📊 実行サマリー</b></summary>" >> summary.md
+          echo "" >> summary.md
+
+          # 全体の統計情報を計算
+          yaml_total=0
+          yaml_success=0
+          yaml_failure=0
+          yaml_timeout=0
+          yaml_cached=0
+
+          ts_total=0
+          ts_success=0
+          ts_failure=0
+          ts_timeout=0
+          ts_cached=0
+
+          if [ -f artifacts/test-results-tutorial/yaml_results.csv ]; then
+            yaml_total=$(grep -v "^sample" artifacts/test-results-tutorial/yaml_results.csv | grep -v ",skipped," | wc -l)
+            yaml_success=$(grep ",success," artifacts/test-results-tutorial/yaml_results.csv | wc -l)
+            yaml_failure=$(grep ",failure," artifacts/test-results-tutorial/yaml_results.csv | wc -l)
+            yaml_timeout=$(grep ",timeout," artifacts/test-results-tutorial/yaml_results.csv | wc -l)
+            yaml_cached=$(grep ",cached," artifacts/test-results-tutorial/yaml_results.csv | wc -l)
+          fi
+
+          if [ -f artifacts/test-results-samples/ts_results.csv ]; then
+            ts_total=$(grep -v "^sample" artifacts/test-results-samples/ts_results.csv | grep -v ",skipped," | wc -l)
+            ts_success=$(grep ",success," artifacts/test-results-samples/ts_results.csv | wc -l)
+            ts_failure=$(grep ",failure," artifacts/test-results-samples/ts_results.csv | wc -l)
+            ts_timeout=$(grep ",timeout," artifacts/test-results-samples/ts_results.csv | wc -l)
+            ts_cached=$(grep ",cached," artifacts/test-results-samples/ts_results.csv | wc -l)
+          fi
+
+          total=$((yaml_total + ts_total))
+          success=$((yaml_success + ts_success))
+          failure=$((yaml_failure + ts_failure))
+          timeout=$((yaml_timeout + ts_timeout))
+          cached=$((yaml_cached + ts_cached))
+
+          # 成功率の計算
+          yaml_success_rate=0
+          if [ $yaml_total -gt 0 ]; then
+            yaml_success_rate=$(echo "scale=2; $yaml_success * 100 / $yaml_total" | bc)
+          fi
+
+          ts_success_rate=0
+          if [ $ts_total -gt 0 ]; then
+            ts_success_rate=$(echo "scale=2; $ts_success * 100 / $ts_total" | bc)
+          fi
+
+          overall_success_rate=0
+          if [ $total -gt 0 ]; then
+            overall_success_rate=$(echo "scale=2; $success * 100 / $total" | bc)
+          fi
+
+          # サマリーテーブルの作成
+          echo "| カテゴリ | 成功率 | 成功 | 失敗 | タイムアウト | キャッシュ済み | 合計 |" >> summary.md
+          echo "| :--- | :---: | :---: | :---: | :---: | :---: | :---: |" >> summary.md
+          echo "| 基本チュートリアル | ${yaml_success_rate}% | ${yaml_success} | ${yaml_failure} | ${yaml_timeout} | ${yaml_cached} | ${yaml_total} |" >> summary.md
+          echo "| 開発者向けチュートリアル | ${ts_success_rate}% | ${ts_success} | ${ts_failure} | ${ts_timeout} | ${ts_cached} | ${ts_total} |" >> summary.md
+          echo "| **合計** | **${overall_success_rate}%** | **${success}** | **${failure}** | **${timeout}** | **${cached}** | **${total}** |" >> summary.md
+          echo "" >> summary.md
+          echo "</details>" >> summary.md
+          echo "" >> summary.md
+
+          # Tutorial results
+          if [ -f artifacts/test-results-tutorial/yaml_results.csv ]; then
+            echo "<details>" >> summary.md
+            echo "<summary><b>📘 基本チュートリアル (Tutorial.md)</b></summary>" >> summary.md
+            echo "" >> summary.md
+            
+            # セクション別の結果テーブル
+            echo "### セクション別実行結果" >> summary.md
+            echo "" >> summary.md
+            
+            # セクションのリストを取得
+            sections=$(grep -v "^sample" artifacts/test-results-tutorial/yaml_results.csv | cut -d',' -f2 | sort | uniq)
+            
+            # セクション別のテーブルを作成
+            echo "| セクション | 成功率 | 成功 | 失敗 | タイムアウト | キャッシュ済み |" >> summary.md
+            echo "| :--- | :---: | :---: | :---: | :---: | :---: |" >> summary.md
+            
+            for section in $sections; do
+              section_total=$(grep ",$section," artifacts/test-results-tutorial/yaml_results.csv | grep -v ",skipped," | wc -l)
+              section_success=$(grep ",$section,success," artifacts/test-results-tutorial/yaml_results.csv | wc -l)
+              section_failure=$(grep ",$section,failure," artifacts/test-results-tutorial/yaml_results.csv | wc -l)
+              section_timeout=$(grep ",$section,timeout," artifacts/test-results-tutorial/yaml_results.csv | wc -l)
+              section_cached=$(grep ",$section,cached," artifacts/test-results-tutorial/yaml_results.csv | wc -l)
+              
+              section_success_rate=0
+              if [ $section_total -gt 0 ]; then
+                section_success_rate=$(echo "scale=2; $section_success * 100 / $section_total" | bc)
+              fi
+              
+              echo "| ${section} | ${section_success_rate}% | ${section_success} | ${section_failure} | ${section_timeout} | ${section_cached} |" >> summary.md
+            done
+            
+            echo "" >> summary.md
+            
+            # 詳細な実行結果テーブル
+            echo "### 詳細な実行結果" >> summary.md
+            echo "" >> summary.md
+            echo "| サンプル | セクション | ステータス | 実行時間 |" >> summary.md
+            echo "| :--- | :--- | :---: | :---: |" >> summary.md
+            
+            grep -v "^sample" artifacts/test-results-tutorial/yaml_results.csv | sort -t, -k2,2 | while IFS=, read -r sample section status duration hash; do
+              if [ "$status" = "success" ]; then
+                status_icon="✅ 成功"
+              elif [ "$status" = "failure" ]; then
+                status_icon="❌ 失敗"
+              elif [ "$status" = "timeout" ]; then
+                status_icon="⏱️ タイムアウト"
+              elif [ "$status" = "cached" ]; then
+                status_icon="⚡ キャッシュ済み"
+              else
+                status_icon="⏭️ スキップ"
+              fi
+              
+              echo "| ${sample} | ${section} | ${status_icon} | ${duration}秒 |" >> summary.md
+            done
+            
+            echo "" >> summary.md
+            echo "</details>" >> summary.md
+            echo "" >> summary.md
+          fi
+
+          # Samples results
+          if [ -f artifacts/test-results-samples/ts_results.csv ]; then
+            echo "<details>" >> summary.md
+            echo "<summary><b>📚 開発者向けチュートリアル (packages/samples/README.md)</b></summary>" >> summary.md
+            echo "" >> summary.md
+            
+            # 詳細な実行結果テーブル
+            echo "### 詳細な実行結果" >> summary.md
+            echo "" >> summary.md
+            echo "| サンプル | 名前 | ステータス | 実行時間 |" >> summary.md
+            echo "| :--- | :--- | :---: | :---: |" >> summary.md
+            
+            grep -v "^sample" artifacts/test-results-samples/ts_results.csv | sort | while IFS=, read -r path name status duration hash; do
+              if [ "$status" = "success" ]; then
+                status_icon="✅ 成功"
+              elif [ "$status" = "failure" ]; then
+                status_icon="❌ 失敗"
+              elif [ "$status" = "timeout" ]; then
+                status_icon="⏱️ タイムアウト"
+              elif [ "$status" = "cached" ]; then
+                status_icon="⚡ キャッシュ済み"
+              else
+                status_icon="⏭️ スキップ"
+              fi
+              
+              echo "| ${path} | ${name} | ${status_icon} | ${duration}秒 |" >> summary.md
+            done
+            
+            echo "" >> summary.md
+            echo "</details>" >> summary.md
+            echo "" >> summary.md
+          fi
+
+          # 失敗したサンプルがある場合は特別なセクションを追加
+          if [ $((failure + timeout)) -gt 0 ]; then
+            echo "<details>" >> summary.md
+            echo "<summary><b>🔍 失敗したサンプル</b></summary>" >> summary.md
+            echo "" >> summary.md
+            
+            echo "| カテゴリ | サンプル | 詳細 | ステータス |" >> summary.md
+            echo "| :--- | :--- | :--- | :---: |" >> summary.md
+            
+            if [ -f artifacts/test-results-tutorial/yaml_results.csv ]; then
+              grep ",failure," artifacts/test-results-tutorial/yaml_results.csv | while IFS=, read -r sample section status duration hash; do
+                echo "| 基本チュートリアル | ${sample} | ${section} | ❌ 失敗 |" >> summary.md
+              done
+              
+              grep ",timeout," artifacts/test-results-tutorial/yaml_results.csv | while IFS=, read -r sample section status duration hash; do
+                echo "| 基本チュートリアル | ${sample} | ${section} | ⏱️ タイムアウト |" >> summary.md
+              done
+            fi
+            
+            if [ -f artifacts/test-results-samples/ts_results.csv ]; then
+              grep ",failure," artifacts/test-results-samples/ts_results.csv | while IFS=, read -r path name status duration hash; do
+                echo "| 開発者向けチュートリアル | ${path} | ${name} | ❌ 失敗 |" >> summary.md
+              done
+              
+              grep ",timeout," artifacts/test-results-samples/ts_results.csv | while IFS=, read -r path name status duration hash; do
+                echo "| 開発者向けチュートリアル | ${path} | ${name} | ⏱️ タイムアウト |" >> summary.md
+              done
+            fi
+            
+            echo "" >> summary.md
+            echo "</details>" >> summary.md
+            echo "" >> summary.md
+          fi
+
+          cat summary.md
+
+      - name: Find PR number
+        if: github.event_name == 'pull_request'
+        id: pr
+        run: echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('summary.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: ${{ steps.pr.outputs.number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
