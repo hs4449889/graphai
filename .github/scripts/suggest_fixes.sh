@@ -117,11 +117,37 @@ EOF
     -H "content-type: application/json" \
     -d "${request_json}")
   
-  # レスポンスからコンテンツを抽出
-  suggestion=$(echo "${response}" | grep -o '"content":\[{"type":"text","text":"[^"]*"' | sed 's/"content":\[{"type":"text","text":"//g' | sed 's/"$//g')
+  # レスポンスからコンテンツを抽出（jqを使用）
+  if ! command -v jq &> /dev/null; then
+    echo -e "${YELLOW}警告: jqコマンドが見つかりません。簡易的な方法でレスポンスを解析します。${NC}"
+    suggestion=$(echo "${response}" | grep -o '"content":\[{"type":"text","text":"[^"]*"' | sed 's/"content":\[{"type":"text","text":"//g' | sed 's/"$//g')
+    suggestion=$(echo "${suggestion}" | sed 's/\\n/\n/g' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
+  else
+    # jqを使用してJSONを適切に解析
+    suggestion=$(echo "${response}" | jq -r '.content[0].text // empty')
+    
+    # jqが空の結果を返した場合は別の方法を試す
+    if [[ -z "${suggestion}" ]]; then
+      echo -e "${YELLOW}警告: jqでの解析に失敗しました。別の方法を試みます。${NC}"
+      # デバッグ用にレスポンスの構造を出力
+      echo "${response}" > "${RESULTS_DIR}/debug_response_${sample}.json"
+      
+      # 別の方法でコンテンツを抽出
+      suggestion=$(echo "${response}" | jq -r '.messages[0].content // empty')
+      
+      # それでも失敗した場合は、生のレスポンスから抽出を試みる
+      if [[ -z "${suggestion}" ]]; then
+        suggestion=$(echo "${response}" | grep -o '"text":"[^"]*"' | head -1 | sed 's/"text":"//g' | sed 's/"$//g')
+        suggestion=$(echo "${suggestion}" | sed 's/\\n/\n/g' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
+      fi
+    fi
+  fi
   
-  # エスケープされた文字を元に戻す
-  suggestion=$(echo "${suggestion}" | sed 's/\\n/\n/g' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
+  # 提案が空の場合はエラーメッセージを設定
+  if [[ -z "${suggestion}" ]]; then
+    suggestion="APIからの応答の解析に失敗しました。レスポンスの詳細は ${RESULTS_DIR}/debug_response_${sample}.json を確認してください。"
+    echo "${response}" > "${RESULTS_DIR}/debug_response_${sample}.json"
+  fi
   
   # 修正提案をファイルに追加
   echo "<details>" >> "${SUGGESTIONS_FILE}"

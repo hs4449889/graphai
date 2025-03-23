@@ -123,8 +123,8 @@ jobs:
             # 詳細な実行結果テーブル
             echo "### 詳細な実行結果" >> summary.md
             echo "" >> summary.md
-            echo "| サンプル | ステータス | 実行時間 |" >> summary.md
-            echo "| :--- | :---: | :---: |" >> summary.md
+            echo "| サンプル | ステータス | 実行時間 | ログ |" >> summary.md
+            echo "| :--- | :---: | :---: | :--- |" >> summary.md
             
             grep -v "^sample" artifacts/test-results/results.csv | sort | while IFS=, read -r sample status duration; do
               if [ "$status" = "success" ]; then
@@ -133,7 +133,15 @@ jobs:
                 status_icon="❌ 失敗"
               fi
               
-              echo "| ${sample} | ${status_icon} | ${duration}秒 |" >> summary.md
+              # ログファイルの内容を取得
+              log_content=""
+              log_file="artifacts/test-results/logs/${sample}.log"
+              if [ -f "${log_file}" ]; then
+                # ログファイルの内容をエスケープして変数に格納
+                log_content=$(cat "${log_file}" | sed 's/$/\\n/' | tr -d '\n')
+              fi
+              
+              echo "| ${sample} | ${status_icon} | ${duration}秒 | <details><summary>ログを表示</summary><pre>${log_content}</pre></details> |" >> summary.md
             done
             
             echo "" >> summary.md
