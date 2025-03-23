@@ -205,7 +205,7 @@ export const openAIMockAgent: AgentFunction<OpenAIParams, OpenAIResult, OpenAIIn
   };
 };
 const openaiAgentInfo: AgentFunctionInfo = {
-  name: "openAIAgentModified", // 破壊的変更：エージェント名を変更
+  name: "openAIAgent",
   agent: openAIAgent,
   mock: openAIMockAgent,
   inputs: {
