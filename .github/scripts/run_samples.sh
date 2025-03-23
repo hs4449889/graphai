@@ -18,7 +18,7 @@ CACHE_FILE="${RESULTS_DIR}/.cache"
 
 # デフォルト設定
 VERBOSE=false
-PARALLEL=true
+PARALLEL=false
 MAX_JOBS=4
 TIMEOUT=300  # 5分
 ENV_FILE=""
@@ -308,7 +308,7 @@ extract_yaml_samples() {
       
       # 特定のサンプルが指定されている場合、一致するかチェック
       local should_run=true
-      if [[ -n "${SPECIFIC_SAMPLE}" ]]; then
+      if [[ -n "${SPECIFIC_SAMPLE}" && "${SPECIFIC_SAMPLE}" != "" ]]; then
         local base_name=$(basename "${yaml_file}")
         if [[ "${base_name}" != *"${SPECIFIC_SAMPLE}"* && "${yaml_section}" != *"${SPECIFIC_SAMPLE}"* ]]; then
           should_run=false
@@ -375,8 +375,9 @@ run_yaml_sample() {
     echo "::group::実行中: ${yaml_file} (セクション: ${section})"
   fi
   
-  # タイムアウト付きでサンプルを実行
-  timeout ${TIMEOUT} graphai "${TEMP_DIR}/${yaml_file}" > "${log_file}" 2>&1
+  # タイムアウト付きでサンプルを実行（インタラクティブなサンプルに対応）
+  # 自動応答を提供（yes/noの質問に対して常に「y」と応答）
+  timeout ${TIMEOUT} bash -c "yes y | graphai \"${TEMP_DIR}/${yaml_file}\"" > "${log_file}" 2>&1
   local exit_code=$?
   
   local end_time=$(date +%s)
@@ -456,7 +457,7 @@ prepare_ts_samples() {
     
     # 特定のサンプルが指定されている場合、一致するかチェック
     local should_run=true
-    if [[ -n "${SPECIFIC_SAMPLE}" ]]; then
+    if [[ -n "${SPECIFIC_SAMPLE}" && "${SPECIFIC_SAMPLE}" != "" ]]; then
       if [[ "${sample_path}" != *"${SPECIFIC_SAMPLE}"* && "${sample_name}" != *"${SPECIFIC_SAMPLE}"* ]]; then
         should_run=false
       fi
@@ -511,8 +512,9 @@ run_ts_sample() {
     echo "::group::実行中: ${sample_path} (${sample_name})"
   fi
   
-  # タイムアウト付きでサンプルを実行
-  timeout ${TIMEOUT} graphai "${full_path}" > "${log_file}" 2>&1
+  # タイムアウト付きでサンプルを実行（インタラクティブなサンプルに対応）
+  # 自動応答を提供（yes/noの質問に対して常に「y」と応答）
+  timeout ${TIMEOUT} bash -c "yes y | graphai \"${full_path}\"" > "${log_file}" 2>&1
   local exit_code=$?
   
   local end_time=$(date +%s)

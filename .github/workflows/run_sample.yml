@@ -45,7 +45,7 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: ./.github/scripts/run_samples.sh --output github-actions --category ${{ matrix.category }} --parallel --jobs 4 --timeout 180
+        run: ./.github/scripts/run_samples.sh --output github-actions --category ${{ matrix.category }} --timeout 180
         continue-on-error: true
 
       - name: Upload test results
