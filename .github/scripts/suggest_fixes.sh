@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # GraphAI サンプル修正提案スクリプト
-# 失敗したYAMLサンプルを特定し、Claude 3.7 APIを使用して修正案を生成する
+# 失敗したYAMLサンプルを特定し、YAMLファイルとエラーログを表示する
 
 # 定数
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,15 +23,6 @@ else
   YELLOW=''
   BLUE=''
   NC=''
-fi
-
-# Claude APIのエンドポイント
-CLAUDE_API_ENDPOINT="https://api.anthropic.com/v1/messages"
-
-# 環境変数の確認
-if [[ -z "${ANTHROPIC_API_KEY}" ]]; then
-  echo -e "${RED}エラー: ANTHROPIC_API_KEYが設定されていません。${NC}"
-  exit 1
 fi
 
 # 結果ファイルの確認
@@ -95,65 +86,21 @@ for sample in "${failed_samples[@]}"; do
   # エラーログの内容を取得（最後の20行）
   error_log=$(tail -n 20 "${log_file}")
   
-  # Claude APIリクエストの作成
-  request_json=$(cat <<EOF
-{
-  "model": "claude-3-haiku-20240307",
-  "max_tokens": 1000,
-  "messages": [
-    {
-      "role": "user",
-      "content": "以下のGraphAI YAMLファイルの実行に失敗しました。エラーログを確認して、修正案を提案してください。\n\n# YAMLファイル\n\`\`\`yaml\n${sample_content}\n\`\`\`\n\n# エラーログ\n\`\`\`\n${error_log}\n\`\`\`\n\n修正案を提案してください。修正が必要な部分と修正後のコードを明確に示してください。"
-    }
-  ]
-}
-EOF
-)
-  
-  # Claude APIを呼び出して修正提案を取得
-  response=$(curl -s -X POST "${CLAUDE_API_ENDPOINT}" \
-    -H "x-api-key: ${ANTHROPIC_API_KEY}" \
-    -H "anthropic-version: 2023-06-01" \
-    -H "content-type: application/json" \
-    -d "${request_json}")
-  
-  # レスポンスからコンテンツを抽出（jqを使用）
-  if ! command -v jq &> /dev/null; then
-    echo -e "${YELLOW}警告: jqコマンドが見つかりません。簡易的な方法でレスポンスを解析します。${NC}"
-    suggestion=$(echo "${response}" | grep -o '"content":\[{"type":"text","text":"[^"]*"' | sed 's/"content":\[{"type":"text","text":"//g' | sed 's/"$//g')
-    suggestion=$(echo "${suggestion}" | sed 's/\\n/\n/g' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
-  else
-    # jqを使用してJSONを適切に解析
-    suggestion=$(echo "${response}" | jq -r '.content[0].text // empty')
-    
-    # jqが空の結果を返した場合は別の方法を試す
-    if [[ -z "${suggestion}" ]]; then
-      echo -e "${YELLOW}警告: jqでの解析に失敗しました。別の方法を試みます。${NC}"
-      # デバッグ用にレスポンスの構造を出力
-      echo "${response}" > "${RESULTS_DIR}/debug_response_${sample}.json"
-      
-      # 別の方法でコンテンツを抽出
-      suggestion=$(echo "${response}" | jq -r '.messages[0].content // empty')
-      
-      # それでも失敗した場合は、生のレスポンスから抽出を試みる
-      if [[ -z "${suggestion}" ]]; then
-        suggestion=$(echo "${response}" | grep -o '"text":"[^"]*"' | head -1 | sed 's/"text":"//g' | sed 's/"$//g')
-        suggestion=$(echo "${suggestion}" | sed 's/\\n/\n/g' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
-      fi
-    fi
-  fi
-  
-  # 提案が空の場合はエラーメッセージを設定
-  if [[ -z "${suggestion}" ]]; then
-    suggestion="APIからの応答の解析に失敗しました。レスポンスの詳細は ${RESULTS_DIR}/debug_response_${sample}.json を確認してください。"
-    echo "${response}" > "${RESULTS_DIR}/debug_response_${sample}.json"
-  fi
-  
   # 修正提案をファイルに追加
   echo "<details>" >> "${SUGGESTIONS_FILE}"
   echo "<summary><b>📝 ${sample} の修正提案</b></summary>" >> "${SUGGESTIONS_FILE}"
   echo "" >> "${SUGGESTIONS_FILE}"
-  echo "${suggestion}" >> "${SUGGESTIONS_FILE}"
+  echo "## YAMLファイル" >> "${SUGGESTIONS_FILE}"
+  echo "" >> "${SUGGESTIONS_FILE}"
+  echo '```yaml' >> "${SUGGESTIONS_FILE}"
+  echo "${sample_content}" >> "${SUGGESTIONS_FILE}"
+  echo '```' >> "${SUGGESTIONS_FILE}"
+  echo "" >> "${SUGGESTIONS_FILE}"
+  echo "## エラーログ" >> "${SUGGESTIONS_FILE}"
+  echo "" >> "${SUGGESTIONS_FILE}"
+  echo '```' >> "${SUGGESTIONS_FILE}"
+  echo "${error_log}" >> "${SUGGESTIONS_FILE}"
+  echo '```' >> "${SUGGESTIONS_FILE}"
   echo "" >> "${SUGGESTIONS_FILE}"
   echo "</details>" >> "${SUGGESTIONS_FILE}"
   echo "" >> "${SUGGESTIONS_FILE}"

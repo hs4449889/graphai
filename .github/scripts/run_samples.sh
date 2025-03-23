@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 YAML_DIR="${SCRIPT_DIR}/tutorial_yml"
 RESULTS_DIR="${REPO_ROOT}/test_results"
 LOG_DIR="${RESULTS_DIR}/logs"
-TIMEOUT=180  # タイムアウト時間（秒）
+TIMEOUT=20  # タイムアウト時間（秒）
 
 # 色の定義（CI環境では無効化）
 if [[ -t 1 ]]; then
