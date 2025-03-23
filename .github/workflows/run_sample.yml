@@ -1,0 +1,229 @@
+name: Check GraphAI Samples
+
+on:
+  pull_request:
+    paths:
+      - "packages/**"
+      - "agents/**"
+      - "llm_agents/**"
+      - ".github/scripts/tutorial_yml/**"
+  workflow_dispatch: # 手動実行用
+
+jobs:
+  run-samples:
+    name: Run GraphAI Samples
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20.x]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }} # PRの最新コミットを使用
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Build packages
+        run: yarn run build
+
+      - name: Link local packages
+        run: |
+          # PRの変更を反映したローカルパッケージをリンク
+          yarn link-all
+
+      - name: Install GraphAI CLI from current PR
+        run: |
+          # PR内のGraphAI CLIをグローバルにインストール
+          cd packages/graphai_cli
+          npm link
+
+      - name: Make scripts executable
+        run: chmod +x .github/scripts/run_samples.sh
+
+      - name: Debug directory structure
+        run: |
+          echo "Checking for .github/scripts/tutorial_yml directory:"
+          ls -la .github/scripts/tutorial_yml/ || echo ".github/scripts/tutorial_yml directory not found"
+          echo "Installed GraphAI CLI version:"
+          graphai --version
+
+      - name: Run samples
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: ./.github/scripts/run_samples.sh
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test_results/
+          retention-days: 7
+
+  summarize-results:
+    name: Summarize Results
+    needs: run-samples
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+        
+      - name: Make scripts executable
+        run: chmod +x .github/scripts/suggest_fixes.sh
+
+      - name: Summarize results
+        run: |
+          echo "## GraphAI サンプル実行結果" > summary.md
+          echo "" >> summary.md
+          echo "**PR #${{ github.event.pull_request.number }} の変更を反映したGraphAIでテスト実行**" >> summary.md
+          echo "" >> summary.md
+
+          # 全体サマリーの作成
+          echo "<details open>" >> summary.md
+          echo "<summary><b>📊 実行サマリー</b></summary>" >> summary.md
+          echo "" >> summary.md
+
+          # 全体の統計情報を計算
+          total=0
+          success=0
+          failure=0
+
+          if [ -f artifacts/test-results/results.csv ]; then
+            total=$(grep -v "^sample" artifacts/test-results/results.csv | wc -l)
+            success=$(grep ",success," artifacts/test-results/results.csv | wc -l)
+            failure=$(grep ",failure," artifacts/test-results/results.csv | wc -l)
+          fi
+
+          # 成功率の計算
+          success_rate=0
+          if [ ${total} -gt 0 ]; then
+            success_rate=$(echo "scale=2; ${success} * 100 / ${total}" | bc)
+          fi
+
+          # サマリーテーブルの作成
+          echo "| 成功率 | 成功 | 失敗 | 合計 |" >> summary.md
+          echo "| :---: | :---: | :---: | :---: |" >> summary.md
+          echo "| ${success_rate}% | ${success} | ${failure} | ${total} |" >> summary.md
+          echo "" >> summary.md
+          echo "</details>" >> summary.md
+          echo "" >> summary.md
+
+          # 詳細な実行結果
+          if [ -f artifacts/test-results/results.csv ]; then
+            echo "<details>" >> summary.md
+            echo "<summary><b>📘 サンプル実行結果</b></summary>" >> summary.md
+            echo "" >> summary.md
+            
+            # 詳細な実行結果テーブル
+            echo "### 詳細な実行結果" >> summary.md
+            echo "" >> summary.md
+            echo "| サンプル | ステータス | 実行時間 |" >> summary.md
+            echo "| :--- | :---: | :---: |" >> summary.md
+            
+            grep -v "^sample" artifacts/test-results/results.csv | sort | while IFS=, read -r sample status duration; do
+              if [ "$status" = "success" ]; then
+                status_icon="✅ 成功"
+              else
+                status_icon="❌ 失敗"
+              fi
+              
+              echo "| ${sample} | ${status_icon} | ${duration}秒 |" >> summary.md
+            done
+            
+            echo "" >> summary.md
+            echo "</details>" >> summary.md
+            echo "" >> summary.md
+          fi
+
+          # 失敗したサンプルがある場合は特別なセクションを追加
+          if [ -f artifacts/test-results/results.csv ] && grep -q ",failure," artifacts/test-results/results.csv; then
+            echo "<details>" >> summary.md
+            echo "<summary><b>🔍 失敗したサンプル</b></summary>" >> summary.md
+            echo "" >> summary.md
+            
+            echo "| サンプル | ステータス |" >> summary.md
+            echo "| :--- | :---: |" >> summary.md
+            
+            grep ",failure," artifacts/test-results/results.csv | while IFS=, read -r sample status duration; do
+              echo "| ${sample} | ❌ 失敗 |" >> summary.md
+            done
+            
+            echo "" >> summary.md
+            echo "</details>" >> summary.md
+            echo "" >> summary.md
+          fi
+
+          cat summary.md
+
+      - name: Find PR number
+        if: github.event_name == 'pull_request'
+        id: pr
+        run: echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+
+      - name: Prepare test results directory
+        run: |
+          mkdir -p test_results/logs
+          
+          # 実行結果をコピー
+          if [ -f artifacts/test-results/results.csv ]; then
+            cp artifacts/test-results/results.csv test_results/
+            if [ -d artifacts/test-results/logs ]; then
+              cp -r artifacts/test-results/logs/* test_results/logs/
+            fi
+          fi
+
+      - name: Generate fix suggestions
+        if: github.event_name == 'pull_request'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: ./.github/scripts/suggest_fixes.sh
+        continue-on-error: true
+
+      - name: Comment on PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('summary.md', 'utf8');
+            
+            // PRコメントにサマリーを追加
+            await github.rest.issues.createComment({
+              issue_number: ${{ steps.pr.outputs.number }},
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+            
+            // 修正提案がある場合は別のコメントとして追加
+            if (fs.existsSync('test_results/fix_suggestions.md')) {
+              const suggestions = fs.readFileSync('test_results/fix_suggestions.md', 'utf8');
+              
+              await github.rest.issues.createComment({
+                issue_number: ${{ steps.pr.outputs.number }},
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: suggestions
+              });
+            }
